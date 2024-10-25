@@ -379,8 +379,7 @@ def run_experiment(exp_name, args):
 
         wandb.init(
             dir=job_dir,
-            project=args.env_id,
-            entity=args.wandb_entity,
+            project="phasic-exploration--vsop-3d",
             sync_tensorboard=True,
             config=config,
             name=run_name,
