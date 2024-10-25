@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="vsop-3d",
+    name="vsop_3d",
     version="0.0.0",
     description="",
     url="https://github.com/anndvision/vsop-3d",
