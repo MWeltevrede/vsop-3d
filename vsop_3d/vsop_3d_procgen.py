@@ -507,14 +507,14 @@ def run_experiment(exp_name, args):
             with torch.no_grad():
                 agent.train()
                 action, logprob, _ = agent.get_action(next_obs)
-                agent.eval()
-                action_test, _, _ = agent.get_action(next_obs_test)
+                # agent.eval()
+                # action_test, _, _ = agent.get_action(next_obs_test)
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, info = envs.step(action.cpu().numpy())
-            next_obs_test, _, _, info_test = envs_test.step(action_test.cpu().numpy())
+            # next_obs_test, _, _, info_test = envs_test.step(action_test.cpu().numpy())
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done, next_obs_test = (
                 torch.Tensor(np.array(next_obs)).to(device),
@@ -532,16 +532,16 @@ def run_experiment(exp_name, args):
                     )
                     break
 
-            for item in info_test:
-                if "episode" in item.keys():
-                    test_returns.append(item["episode"]["r"])
-                    _ = writer.add_scalar(
-                        "test/episodic_return", item["episode"]["r"], global_step
-                    )
-                    _ = writer.add_scalar(
-                        "test/episodic_length", item["episode"]["l"], global_step
-                    )
-                    break
+            # for item in info_test:
+            #     if "episode" in item.keys():
+            #         test_returns.append(item["episode"]["r"])
+            #         _ = writer.add_scalar(
+            #             "test/episodic_return", item["episode"]["r"], global_step
+            #         )
+            #         _ = writer.add_scalar(
+            #             "test/episodic_length", item["episode"]["l"], global_step
+            #         )
+            #         break
 
         # bootstrap value if not done
         b_obs = obs.permute(1, 0, 2, 3, 4, 5).reshape(
