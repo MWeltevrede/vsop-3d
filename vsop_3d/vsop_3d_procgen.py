@@ -489,7 +489,7 @@ def run_experiment(exp_name, args):
     global_step = 0
     start_time = time.time()
     next_obs = torch.Tensor(np.array(envs.reset())).to(device)
-    next_obs_test = torch.Tensor(np.array(envs_test.reset())).to(device)
+    # next_obs_test = torch.Tensor(np.array(envs_test.reset())).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
 
@@ -516,10 +516,14 @@ def run_experiment(exp_name, args):
             next_obs, reward, done, info = envs.step(action.cpu().numpy())
             # next_obs_test, _, _, info_test = envs_test.step(action_test.cpu().numpy())
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done, next_obs_test = (
+            # next_obs, next_done, next_obs_test = (
+            #     torch.Tensor(np.array(next_obs)).to(device),
+            #     torch.Tensor(done).to(device),
+            #     torch.Tensor(np.array(next_obs_test)).to(device),
+            # )
+            next_obs, next_done = (
                 torch.Tensor(np.array(next_obs)).to(device),
                 torch.Tensor(done).to(device),
-                torch.Tensor(np.array(next_obs_test)).to(device),
             )
 
             for item in info:
