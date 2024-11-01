@@ -383,6 +383,7 @@ def run_experiment(exp_name, args):
             config=config,
             name=run_name,
             save_code=True,
+            tags=[args.env_id],
         )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
