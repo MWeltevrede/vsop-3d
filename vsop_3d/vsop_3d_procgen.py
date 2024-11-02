@@ -22,6 +22,7 @@
 import argparse
 import random
 import time
+from collections import deque
 from distutils.util import strtobool
 from pathlib import Path
 
@@ -210,6 +211,12 @@ def parse_args():
         default=2,
         help="width multiplier",
     )
+    parser.add_argument(
+        "--max_pure_expl_steps",
+        type=int,
+        default=0,
+        help="maximum number of pure exploration steps to take each episode",
+    )
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -389,6 +396,17 @@ def make_envs(num_envs, env_id, num_levels, gamma, distribution_mode="easy", fra
     envs = gym.wrappers.FrameStack(envs, frames)
     return envs
 
+def has_full_episode(queue):
+    first_done = -1
+    second_done = -1
+    for i, experience_tuple in enumerate(queue):
+        if experience_tuple[1]:
+            if first_done == -1:
+                first_done = i
+            elif second_done == -1:
+                second_done = i
+                break
+    return first_done >=0 and second_done >=0, first_done, second_done
 
 def main():
     args = parse_args()
@@ -485,6 +503,17 @@ def run_experiment(exp_name, args):
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
 
+    ##
+    ## Pure exploration
+    ##
+    # a temporary buffer that queues all the collected experiences outside of the pure exploration phase
+    # before it is added to the rollout buffer
+    tmp_rollout_buffer = [deque() for _ in range(args.num_envs)]
+    max_pure_expl_steps = args.max_pure_expl_steps
+    num_pure_expl_steps = np.random.randint(0, max_pure_expl_steps+1 , size=args.num_envs)
+    episode_steps = np.zeros(args.num_envs)
+    num_normal_steps = 0
+
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
@@ -498,10 +527,14 @@ def run_experiment(exp_name, args):
     for update in range(1, num_updates + 1):
         if not args.thompson:
             agent.eval()
-        for step in range(0, args.num_steps):
+        n_steps_added_to_buffer = 0
+        while n_steps_added_to_buffer < args.num_steps:
+            experience = []
             global_step += 1 * args.num_envs
-            obs[step] = next_obs.byte().to("cpu")
-            dones[step] = next_done
+            # obs[step] = next_obs.byte().to("cpu")
+            # dones[step] = next_done
+            experience.append(next_obs.byte().to("cpu"))
+            experience.append(next_done)
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
@@ -509,13 +542,22 @@ def run_experiment(exp_name, args):
                 action, logprob, _ = agent.get_action(next_obs)
                 agent.eval()
                 action_test, _, _ = agent.get_action(next_obs_test)
-            actions[step] = action
-            logprobs[step] = logprob
+            # actions[step] = action
+            # logprobs[step] = logprob
+            experience.append(action)
+            experience.append(logprob)
+
+            normal_inds = episode_steps >= num_pure_expl_steps
+            pure_inds = episode_steps < num_pure_expl_steps
+            # random pure exploration for now
+            action = action.cpu().numpy()
+            action[pure_inds] = np.array([envs.action_space.sample() for _ in range(sum(pure_inds))])
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, done, info = envs.step(action.cpu().numpy())
+            next_obs, reward, done, info = envs.step(action)
             next_obs_test, _, _, info_test = envs_test.step(action_test.cpu().numpy())
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            # rewards[step] = torch.tensor(reward).to(device).view(-1)
+            experience.append(reward)
             next_obs, next_done, next_obs_test = (
                 torch.Tensor(np.array(next_obs)).to(device),
                 torch.Tensor(done).to(device),
@@ -543,6 +585,74 @@ def run_experiment(exp_name, args):
                     )
                     break
 
+            # add non-pure exploration experience to the tmp buffer
+            for idx, normal in enumerate(normal_inds):
+                if normal:
+                    if episode_steps[idx] == num_pure_expl_steps[idx]:
+                        episode_just_started = torch.tensor(1.).to(device)
+                    else:
+                        episode_just_started = torch.tensor(0.).to(device)
+                    experience_tuple = (experience[0][:,idx], episode_just_started, experience[2][idx], experience[3][idx], experience[4][idx])
+                    tmp_rollout_buffer[idx].append(experience_tuple)
+
+            # add experience to rollout buffer if possible
+            if np.all(np.array([not len(q) == 0 for q in tmp_rollout_buffer])):
+                obs_list = []
+                dones_list = []
+                action_list = []
+                log_probs_list = []
+                reward_list = []
+                for idx in range(args.num_envs):
+                    experience_tuple = tmp_rollout_buffer[idx].popleft()
+                    obs_list.append(experience_tuple[0])
+                    dones_list.append(experience_tuple[1])
+                    action_list.append(experience_tuple[2])
+                    log_probs_list.append(experience_tuple[3])
+                    reward_list.append(experience_tuple[4])
+                obs_list = torch.stack(obs_list, dim=1)
+                action_list = torch.stack(action_list, dim=0)
+                reward_list = torch.tensor(np.stack(reward_list, axis=0)).to(device).view(-1)
+                dones_list = torch.stack(dones_list, dim=0)
+                log_probs_list = torch.stack(log_probs_list, dim=0)
+
+                obs[n_steps_added_to_buffer] = obs_list
+                dones[n_steps_added_to_buffer] = dones_list
+                actions[n_steps_added_to_buffer] = action_list
+                logprobs[n_steps_added_to_buffer] = log_probs_list
+                rewards[n_steps_added_to_buffer] = reward_list
+                n_steps_added_to_buffer += 1
+                num_normal_steps += 1 * args.num_envs
+            else:
+                # take full episode from other queue (preferably the largest) and add it to the smallest queue
+                sorted_queue_inds = sorted(range(args.num_envs), key=lambda x: len(tmp_rollout_buffer[x]), reverse=True)
+                found_full_episode = False
+                for i in sorted_queue_inds:
+                    queue = tmp_rollout_buffer[i]
+                    has_episode, first_done, second_done = has_full_episode(queue)
+                    if has_episode:
+                        found_full_episode = True
+                        break
+                
+                if found_full_episode:
+                    empty_queue = tmp_rollout_buffer[[len(q) for q in tmp_rollout_buffer].index(0)]
+                    queue.rotate(-1*first_done)
+                    for _ in range(second_done - first_done):
+                        empty_queue.append(queue.popleft())
+                    queue.rotate(first_done)
+
+            episode_steps += 1
+            for idx, d in enumerate(done):
+                if d:
+                    episode_steps[idx] = 0
+                    num_pure_expl_steps[idx] = np.random.randint(0, max_pure_expl_steps+1)
+
+        normal_next_obs = next_obs.detach().clone()
+        normal_next_done = next_done.detach().clone()
+        for idx in range(len(tmp_rollout_buffer)):
+            if not len(tmp_rollout_buffer[idx]) == 0:
+                normal_next_obs[:, idx] = tmp_rollout_buffer[idx][0][0]
+                normal_next_done[idx] = tmp_rollout_buffer[idx][0][1]
+
         # bootstrap value if not done
         b_obs = obs.permute(1, 0, 2, 3, 4, 5).reshape(
             (
@@ -554,7 +664,7 @@ def run_experiment(exp_name, args):
         b_advantages, b_returns = [], []
         dl = torch.utils.data.DataLoader(
             torch.utils.data.TensorDataset(
-                torch.cat([b_obs, next_obs.byte().to("cpu")], dim=1).permute(
+                torch.cat([b_obs, normal_next_obs.byte().to("cpu")], dim=1).permute(
                     1, 0, 2, 3, 4
                 )
             ),
@@ -579,7 +689,7 @@ def run_experiment(exp_name, args):
                 lastgaelam = 0
                 for t in reversed(range(args.num_steps)):
                     if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
+                        nextnonterminal = 1.0 - normal_next_done
                         nextvalues = next_value
                     else:
                         nextnonterminal = 1.0 - dones[t + 1]
@@ -668,6 +778,8 @@ def run_experiment(exp_name, args):
         writer.add_scalar(
             "charts/SPS", int(global_step / (time.time() - start_time)), global_step
         )
+        writer.add_scalar("charts/num_experiences_in_queue", sum([len(q) for q in tmp_rollout_buffer]), global_step)
+        writer.add_scalar("charts/num_normal_steps", num_normal_steps, global_step)
         writer.add_histogram(
             "histograms/values",
             b_values.flatten(),
