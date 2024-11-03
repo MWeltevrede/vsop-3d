@@ -34,6 +34,7 @@ import torch.optim as optim
 from procgen import ProcgenEnv
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
+import cProfile, pstats
 
 
 def parse_args():
@@ -513,6 +514,7 @@ def run_experiment(exp_name, args):
     num_pure_expl_steps = np.random.randint(0, max_pure_expl_steps+1 , size=args.num_envs)
     episode_steps = np.zeros(args.num_envs)
     num_normal_steps = 0
+    num_dones_in_queue = np.zeros(args.num_envs)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -594,6 +596,7 @@ def run_experiment(exp_name, args):
                         episode_just_started = torch.tensor(0.).to(device)
                     experience_tuple = (experience[0][:,idx], episode_just_started, experience[2][idx], experience[3][idx], experience[4][idx])
                     tmp_rollout_buffer[idx].append(experience_tuple)
+                    num_dones_in_queue[idx] += 1 if episode_just_started else 0
 
             # add experience to rollout buffer if possible
             if np.all(np.array([not len(q) == 0 for q in tmp_rollout_buffer])):
@@ -609,6 +612,7 @@ def run_experiment(exp_name, args):
                     action_list.append(experience_tuple[2])
                     log_probs_list.append(experience_tuple[3])
                     reward_list.append(experience_tuple[4])
+                    num_dones_in_queue[idx] += -1 if experience_tuple[1] else 0
                 obs_list = torch.stack(obs_list, dim=1)
                 action_list = torch.stack(action_list, dim=0)
                 reward_list = torch.tensor(np.stack(reward_list, axis=0)).to(device).view(-1)
@@ -627,6 +631,8 @@ def run_experiment(exp_name, args):
                 sorted_queue_inds = sorted(range(args.num_envs), key=lambda x: len(tmp_rollout_buffer[x]), reverse=True)
                 found_full_episode = False
                 for i in sorted_queue_inds:
+                    if num_dones_in_queue[i] < 2:
+                        continue
                     queue = tmp_rollout_buffer[i]
                     has_episode, first_done, second_done = has_full_episode(queue)
                     if has_episode:
@@ -634,11 +640,15 @@ def run_experiment(exp_name, args):
                         break
                 
                 if found_full_episode:
+                    num_dones_in_queue[[len(q) for q in tmp_rollout_buffer].index(0)] += 1
+                    num_dones_in_queue[i] += -1
+
                     empty_queue = tmp_rollout_buffer[[len(q) for q in tmp_rollout_buffer].index(0)]
                     queue.rotate(-1*first_done)
                     for _ in range(second_done - first_done):
                         empty_queue.append(queue.popleft())
                     queue.rotate(first_done)
+                    
 
             episode_steps += 1
             for idx, d in enumerate(done):
