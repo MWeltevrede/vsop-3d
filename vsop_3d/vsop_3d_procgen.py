@@ -505,8 +505,8 @@ def run_experiment(exp_name, args):
     )
     pure_actor_critic.to(device)
 
-    # pure_actor_critic_weights = torch.load(f"/expgen/{config['env_name']}-expgen.pt")
-    pure_actor_critic_weights = torch.load(f"{args.env_id}-expgen.pt")
+    pure_actor_critic_weights = torch.load(f"/expgen/{args.env_id}-expgen.pt")
+    # pure_actor_critic_weights = torch.load(f"{args.env_id}-expgen.pt")
     pure_actor_critic.load_state_dict(pure_actor_critic_weights['state_dict'])
 
     # ALGO Logic: Storage setup
