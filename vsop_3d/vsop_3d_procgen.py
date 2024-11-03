@@ -36,6 +36,8 @@ from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 import cProfile, pstats
 
+from expgen.model import Policy, ImpalaModel
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -488,6 +490,25 @@ def run_experiment(exp_name, args):
             eps=1e-5,
         )
 
+    # create pure exploration actor-critic
+    recurrent_hidden_size = int(256)
+    gray_scale = False
+    epsilon_RPO = 0
+
+    pure_actor_critic = Policy(
+        tuple(np.array(envs.observation_space.shape[1:])[[2,0,1]]),
+        envs.action_space,
+        base=ImpalaModel,
+        base_kwargs={'recurrent': True,
+                        'hidden_size': recurrent_hidden_size, 'gray_scale': gray_scale},
+        epsilon_RPO=epsilon_RPO
+    )
+    pure_actor_critic.to(device)
+
+    # pure_actor_critic_weights = torch.load(f"/expgen/{config['env_name']}-expgen.pt")
+    pure_actor_critic_weights = torch.load(f"{args.env_id}-expgen.pt")
+    pure_actor_critic.load_state_dict(pure_actor_critic_weights['state_dict'])
+
     # ALGO Logic: Storage setup
     obs = (
         torch.zeros(
@@ -515,6 +536,8 @@ def run_experiment(exp_name, args):
     episode_steps = np.zeros(args.num_envs)
     num_normal_steps = 0
     num_dones_in_queue = np.zeros(args.num_envs)
+    pure_masks = torch.ones(args.num_envs, 1, device=device)
+    pure_recurrent_hidden_states = torch.zeros(args.num_envs, pure_actor_critic.recurrent_hidden_state_size, device=device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -552,11 +575,17 @@ def run_experiment(exp_name, args):
             normal_inds = episode_steps >= num_pure_expl_steps
             pure_inds = episode_steps < num_pure_expl_steps
             # random pure exploration for now
-            action = action.cpu().numpy()
-            action[pure_inds] = np.array([envs.action_space.sample() for _ in range(sum(pure_inds))])
+            if sum(pure_inds) > 0:
+                with torch.no_grad():
+                    _, pure_action, _, _, pure_recurrent_hidden_states[pure_inds] = pure_actor_critic.act(
+                        next_obs[-1,pure_inds].permute(0,3,1,2),
+                        pure_recurrent_hidden_states[pure_inds],
+                        pure_masks[pure_inds]
+                        )
+                action[pure_inds] = pure_action.squeeze(-1)
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, done, info = envs.step(action)
+            next_obs, reward, done, info = envs.step(action.cpu().numpy())
             next_obs_test, _, _, info_test = envs_test.step(action_test.cpu().numpy())
             # rewards[step] = torch.tensor(reward).to(device).view(-1)
             experience.append(reward)
@@ -565,6 +594,9 @@ def run_experiment(exp_name, args):
                 torch.Tensor(done).to(device),
                 torch.Tensor(np.array(next_obs_test)).to(device),
             )
+            pure_masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done]).to(device)
+            # Set mask to 0 for the last pure exploration step of the episode
+            pure_masks[episode_steps == num_pure_expl_steps-1] = torch.FloatTensor([0.0]).to(device)
 
             for item in info:
                 if "episode" in item.keys():
