@@ -220,6 +220,12 @@ def parse_args():
         default=0,
         help="maximum number of pure exploration steps to take each episode",
     )
+    parser.add_argument(
+        "--checkpoint_freq",
+        type=int,
+        default=10,
+        help="save the model and optimizer every checkpoint_freq network updates"
+    )
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -420,8 +426,10 @@ def main():
 def run_experiment(exp_name, args):
     job_dir = Path(args.job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = Path(job_dir / "checkpoint")
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    run_name = f"{args.env_id}__{exp_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.env_id}__{exp_name}__{args.seed}__{args.max_pure_expl_steps}__{int(time.time())}"
     config = vars(args)
     config["exp_name"] = exp_name
     if args.track:
@@ -505,8 +513,8 @@ def run_experiment(exp_name, args):
     )
     pure_actor_critic.to(device)
 
-    pure_actor_critic_weights = torch.load(f"/expgen/{args.env_id}-expgen.pt")
-    # pure_actor_critic_weights = torch.load(f"{args.env_id}-expgen.pt")
+    # pure_actor_critic_weights = torch.load(f"/expgen/{args.env_id}-expgen.pt")
+    pure_actor_critic_weights = torch.load(f"{args.env_id}-expgen.pt")
     pure_actor_critic.load_state_dict(pure_actor_critic_weights['state_dict'])
 
     # ALGO Logic: Storage setup
@@ -810,6 +818,14 @@ def run_experiment(exp_name, args):
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+        # save checkpoint
+        if update % args.checkpoint_freq == 0:
+            torch.save({
+                'global_step': global_step,
+                'model_state_dict': agent.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }, checkpoint_dir /  f"{run_name}.cp")
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar(
