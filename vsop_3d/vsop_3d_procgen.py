@@ -691,6 +691,15 @@ def run_experiment(exp_name, args):
                 normal_next_obs[:, idx] = tmp_rollout_buffer[idx][0][0]
                 normal_next_done[idx] = tmp_rollout_buffer[idx][0][1]
 
+        # empty the queues since that data will no longer be on-policy for the next iteration
+        steps_thrown_out = 0
+        for q in tmp_rollout_buffer:
+            steps_thrown_out += len(q)
+            q.clear()
+        num_dones_in_queue = np.zeros(args.num_envs)
+        # don't count the steps we threw out (we only had to throw them out due to implementation issues with Procgen)
+        global_step -= steps_thrown_out
+
         # bootstrap value if not done
         b_obs = obs.permute(1, 0, 2, 3, 4, 5).reshape(
             (
