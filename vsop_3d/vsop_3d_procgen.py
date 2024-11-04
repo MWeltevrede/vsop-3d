@@ -553,6 +553,10 @@ def run_experiment(exp_name, args):
         if not args.thompson:
             agent.eval()
         n_steps_added_to_buffer = 0
+        episode_returns = []
+        episode_len = []
+        test_episode_returns = []
+        test_episode_len = []
         while n_steps_added_to_buffer < args.num_steps:
             experience = []
             global_step += 1 * args.num_envs
@@ -600,23 +604,15 @@ def run_experiment(exp_name, args):
 
             for item in info:
                 if "episode" in item.keys():
-                    _ = writer.add_scalar(
-                        "train/episodic_return", item["episode"]["r"], global_step
-                    )
-                    _ = writer.add_scalar(
-                        "train/episodic_length", item["episode"]["l"], global_step
-                    )
+                    episode_returns.append(item["episode"]["r"])
+                    episode_len.append(item["episode"]["l"])
                     break
 
             for item in info_test:
                 if "episode" in item.keys():
                     test_returns.append(item["episode"]["r"])
-                    _ = writer.add_scalar(
-                        "test/episodic_return", item["episode"]["r"], global_step
-                    )
-                    _ = writer.add_scalar(
-                        "test/episodic_length", item["episode"]["l"], global_step
-                    )
+                    test_episode_returns.append(item["episode"]["r"])
+                    test_episode_len.append(item["episode"]["l"])
                     break
 
             # add non-pure exploration experience to the tmp buffer
@@ -822,6 +818,10 @@ def run_experiment(exp_name, args):
         )
         writer.add_scalar("charts/num_experiences_in_queue", sum([len(q) for q in tmp_rollout_buffer]), global_step)
         writer.add_scalar("charts/num_normal_steps", num_normal_steps, global_step)
+        writer.add_scalar("train/episodic_return", np.array(episode_returns).mean(), global_step)
+        writer.add_scalar("train/episodic_length", np.array(episode_len).mean(), global_step)
+        writer.add_scalar("test/episodic_return", np.array(test_episode_returns).mean(), global_step)
+        writer.add_scalar("test/episodic_length", np.array(test_episode_len).mean(), global_step)
         writer.add_histogram(
             "histograms/values",
             b_values.flatten(),
