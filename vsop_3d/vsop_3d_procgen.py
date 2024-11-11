@@ -25,6 +25,7 @@ import time
 from collections import deque
 from distutils.util import strtobool
 from pathlib import Path
+import os
 
 import gym
 import numpy as np
@@ -221,10 +222,10 @@ def parse_args():
         help="maximum number of pure exploration steps to take each episode",
     )
     parser.add_argument(
-        "--checkpoint_freq",
+        "--num_checkpoints",
         type=int,
-        default=10,
-        help="save the model and optimizer every checkpoint_freq network updates"
+        default=20,
+        help="total number of checkpoints to save"
     )
     parser.add_argument(
         "--reload_checkpoint",
@@ -436,7 +437,7 @@ def reset_frame_stack(env, idx):
         current_obs = env.frames[0]
         current_obs[idx] = obs
         env.frames.append(current_obs)
-    return env.observation()[:, idx]
+    return torch.Tensor(np.array(env.observation())).byte().to("cpu")[:, idx]
 
 def main():
     args = parse_args()
@@ -447,7 +448,7 @@ def main():
 def run_experiment(exp_name, args):
     job_dir = Path(args.job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_dir = Path(job_dir / "checkpoint")
+    checkpoint_dir = Path(job_dir / "checkpoint" / f"{args.env_id}")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     run_name = f"{args.env_id}__{exp_name}__{args.seed}__{args.max_pure_expl_steps}__{int(time.time())}"
@@ -852,12 +853,15 @@ def run_experiment(exp_name, args):
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # save checkpoint
-        if update % args.checkpoint_freq == 0:
+        subtract_checkpoint_array = global_step - (np.arange(0, args.total_timesteps+1, (args.total_timesteps // args.num_checkpoints)) - (args.num_envs*args.num_steps/2.))
+        checkpoint_id = np.where(subtract_checkpoint_array > 0, subtract_checkpoint_array, np.inf).argmin()
+        checkpoint_path = checkpoint_dir / f"{run_name}_{checkpoint_id}.cp"
+        if not os.path.isfile(checkpoint_path):
             torch.save({
                 'global_step': global_step,
                 'model_state_dict': agent.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-            }, checkpoint_dir /  f"{run_name}.cp")
+            }, checkpoint_path)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar(
