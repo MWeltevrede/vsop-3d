@@ -226,6 +226,19 @@ def parse_args():
         default=10,
         help="save the model and optimizer every checkpoint_freq network updates"
     )
+    parser.add_argument(
+        "--reload_checkpoint",
+        type=lambda x: bool(strtobool(x)),
+        default=False,
+        nargs="?",
+        const=True,
+        help="whether to start from checkpoint",
+    )
+    parser.add_argument(
+        "--checkpoint_name",
+        type=str,
+        help="name of the checkpoint file to load from",
+    )
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -417,6 +430,14 @@ def has_full_episode(queue):
                 break
     return first_done >=0 and second_done >=0, first_done, second_done
 
+def reset_frame_stack(env, idx):
+    obs = env.frames[-1][idx]
+    for _ in range(env.num_stack):
+        current_obs = env.frames[0]
+        current_obs[idx] = obs
+        env.frames.append(current_obs)
+    return env.observation()[:, idx]
+
 def main():
     args = parse_args()
     exp_name = f"vsop-3d-{args.experiment_id}"
@@ -557,6 +578,14 @@ def run_experiment(exp_name, args):
 
     test_returns = []
 
+    # reload from checkpoint
+    if args.reload_checkpoint:
+        checkpoint = torch.load(checkpoint_dir / f"{args.checkpoint_name}.cp")
+        agent.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        global_step = checkpoint['global_step']
+        num_updates = (args.total_timesteps - global_step) // args.batch_size
+
     for update in range(1, num_updates + 1):
         if not args.thompson:
             agent.eval()
@@ -628,9 +657,12 @@ def run_experiment(exp_name, args):
                 if normal:
                     if episode_steps[idx] == num_pure_expl_steps[idx]:
                         episode_just_started = torch.tensor(1.).to(device)
+                        # reset the frame-stack history
+                        obs_to_add = reset_frame_stack(envs, idx)
                     else:
                         episode_just_started = torch.tensor(0.).to(device)
-                    experience_tuple = (experience[0][:,idx], episode_just_started, experience[2][idx], experience[3][idx], experience[4][idx])
+                        obs_to_add = experience[0][:,idx]
+                    experience_tuple = (obs_to_add, episode_just_started, experience[2][idx], experience[3][idx], experience[4][idx])
                     tmp_rollout_buffer[idx].append(experience_tuple)
                     num_dones_in_queue[idx] += 1 if episode_just_started else 0
 
