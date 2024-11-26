@@ -240,6 +240,12 @@ def parse_args():
         type=str,
         help="name of the checkpoint file to load from",
     )
+    parser.add_argument(
+        "--num_training_levels",
+        type=int,
+        default=200,
+        help="number of levels to use for training"
+    )
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -484,7 +490,7 @@ def run_experiment(exp_name, args):
     envs = make_envs(
         num_envs=args.num_envs,
         env_id=args.env_id,
-        num_levels=200,
+        num_levels=args.num_training_levels,
         gamma=args.gamma,
         frames=args.num_frames,
     )
