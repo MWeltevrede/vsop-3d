@@ -626,7 +626,7 @@ def run_experiment(exp_name, args):
             if sum(pure_inds) > 0:
                 with torch.no_grad():
                     _, pure_action, _, _, pure_recurrent_hidden_states[pure_inds] = pure_actor_critic.act(
-                        next_obs[-1,pure_inds].permute(0,3,1,2),
+                        next_obs[-1,pure_inds].permute(0,3,1,2) / 255.,
                         pure_recurrent_hidden_states[pure_inds],
                         pure_masks[pure_inds]
                         )
