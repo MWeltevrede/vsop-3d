@@ -404,12 +404,12 @@ class Agent(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
-def make_envs(num_envs, env_id, num_levels, gamma, distribution_mode="easy", frames=4):
+def make_envs(num_envs, env_id, num_levels, gamma, distribution_mode="easy", frames=4, start_level=0):
     envs = ProcgenEnv(
         num_envs=num_envs,
         env_name=env_id,
         num_levels=num_levels,
-        start_level=0,
+        start_level=start_level,
         distribution_mode=distribution_mode,
     )
     envs = gym.wrappers.TransformObservation(envs, lambda obs: obs["rgb"])
