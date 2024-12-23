@@ -484,6 +484,7 @@ def run_experiment(exp_name, args):
     run_name = f"{args.env_id}__{exp_name}__{args.seed}__{args.max_pure_expl_steps}__{int(time.time())}"
     config = vars(args)
     config["exp_name"] = exp_name
+    config["pre-sampled"] = True
     if args.track:
         import wandb
 
@@ -565,8 +566,8 @@ def run_experiment(exp_name, args):
     )
     pure_actor_critic.to(device)
 
-    pure_actor_critic_weights = torch.load(f"/expgen/{args.env_id}-expgen.pt")
-    # pure_actor_critic_weights = torch.load(f"{args.env_id}-expgen.pt")
+    # pure_actor_critic_weights = torch.load(f"/expgen/{args.env_id}-expgen.pt")
+    pure_actor_critic_weights = torch.load(f"{args.env_id}-expgen.pt")
     pure_actor_critic.load_state_dict(pure_actor_critic_weights['state_dict'])
 
     # Pre-sample reachable starting states
@@ -590,8 +591,9 @@ def run_experiment(exp_name, args):
             if len(starting_states[i]) == 0:
                 starting_states[i].append((temp_envs.get_states(), 0))
 
-            step = 0
-            while step < sequence_lengths[j+1]:
+            # step = 0
+            # while step < sequence_lengths[j+1]:
+            for _ in range(sequence_lengths[j+1]):
                 with torch.no_grad():
                     _, pure_action, _, _, pure_recurrent_hidden_states = pure_actor_critic.act(
                         next_obs[-1].permute(0,3,1,2) / 255.,
@@ -601,7 +603,7 @@ def run_experiment(exp_name, args):
 
                 # TRY NOT TO MODIFY: execute the game and log data.
                 next_obs, _, done, _ = temp_envs.step(pure_action.squeeze(-1).cpu().numpy())
-                step += 1
+                # step += 1
 
                 next_obs, next_done = (
                     torch.Tensor(np.array(next_obs)).to(device),
@@ -609,9 +611,9 @@ def run_experiment(exp_name, args):
                 )
                 pure_masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done]).to(device)
 
-                if done[0]:
+                # if done[0]:
                     # print("Done when exploring")
-                    step = 0
+                    # step = 0
             
             starting_states[i].append((temp_envs.get_states(), sequence_lengths[j+1]))
 
@@ -620,6 +622,8 @@ def run_experiment(exp_name, args):
     del pure_masks
     del pure_recurrent_hidden_states
     torch.cuda.empty_cache()
+
+    print("Pre-sampling is done!")
 
     # ALGO Logic: Storage setup
     obs = (
@@ -651,7 +655,7 @@ def run_experiment(exp_name, args):
         total_steps = 0
         for _ in range(num_to_sample):
             s, l = starting_states[np.random.randint(args.num_training_levels)][np.random.randint(args.num_starting_states)]
-            states.append(s)
+            states.append(s[0])
             total_steps += l
         return states, total_steps
     
